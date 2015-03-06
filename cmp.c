@@ -92,6 +92,33 @@ const char *cmp_error_messages[ERROR_MAX + 1] = {
   "Max Error"
 };
 
+typedef struct {
+  uint32_t m:23;
+  uint8_t e:8;
+  uint8_t s:1;
+} _IEEEfloat;
+
+typedef struct {
+  uint64_t m:52;
+  uint16_t e:11;
+  uint8_t s:1;
+} _IEEEdouble;
+
+static float dtof(uint64_t x) {
+  _IEEEdouble *dbl = (_IEEEdouble *)&x;
+  _IEEEfloat fl;
+
+  int e = dbl->e-1023+127;  // exponent adjust
+  if (e >=0 && e <= 255) {
+    fl.s = dbl->s;
+    fl.e = e;
+    fl.m = dbl->m;  // note this one clips the mantisse
+    return *((float *)&fl);
+  }
+  else
+    return 0; // NAN
+}
+
 static const int32_t _i = 1;
 #define is_bigendian() ((*(char *)&_i) == 0)
 
@@ -2007,12 +2034,22 @@ bool cmp_read_object(cmp_ctx_t *ctx, cmp_object_t *obj) {
     obj->as.flt = befloat(obj->as.flt);
   }
   else if (type_marker == DOUBLE_MARKER) {
-    obj->type = CMP_TYPE_DOUBLE;
-    if (!ctx->read(ctx, &obj->as.dbl, sizeof(double))) {
-      ctx->error = DATA_READING_ERROR;
-      return false;
+    if (sizeof(double) == sizeof(float)) {
+      obj->type = CMP_TYPE_FLOAT;
+      if (!ctx->read(ctx, &obj->as.u64, sizeof(float) * 2)) {
+        ctx->error = DATA_READING_ERROR;
+        return false;
+      }
+      obj->as.flt = dtof(be64(obj->as.u64));
     }
-    obj->as.dbl = bedouble(obj->as.dbl);
+    else {
+      obj->type = CMP_TYPE_DOUBLE;
+      if (!ctx->read(ctx, &obj->as.dbl, sizeof(double))) {
+        ctx->error = DATA_READING_ERROR;
+        return false;
+      }
+      obj->as.dbl = bedouble(obj->as.dbl);
+    }
   }
   else if (type_marker == U8_MARKER) {
     obj->type = CMP_TYPE_UINT8;
